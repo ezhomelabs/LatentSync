@@ -30,7 +30,7 @@ def main(config, args):
         raise RuntimeError(f"Audio path '{args.audio_path}' not found")
 
     # Check if the GPU supports float16
-    is_fp16_supported = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] > 7
+    is_fp16_supported = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 7
     dtype = torch.float16 if is_fp16_supported else torch.float32
 
     print(f"Input video path: {args.video_path}")
@@ -60,7 +60,7 @@ def main(config, args):
     denoising_unet, _ = UNet3DConditionModel.from_pretrained(
         OmegaConf.to_container(config.model),
         args.inference_ckpt_path,
-        device="cpu",
+        device="cuda",
     )
 
     denoising_unet = denoising_unet.to(dtype=dtype)
