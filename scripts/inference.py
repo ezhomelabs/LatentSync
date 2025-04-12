@@ -14,6 +14,12 @@
 
 import argparse
 import os
+import cv2
+import numpy as np
+from PIL import Image
+from basicsr.archs.rrdbnet_arch import RRDBNet
+from basicsr.utils import img2tensor, tensor2img
+from gfpgan import GFPGANer
 from omegaconf import OmegaConf
 import torch
 from diffusers import AutoencoderKL, DDIMScheduler
@@ -22,6 +28,32 @@ from latentsync.pipelines.lipsync_pipeline import LipsyncPipeline
 from accelerate.utils import set_seed
 from latentsync.whisper.audio2feature import Audio2Feature
 
+class SuperResolution:
+     """Handles super-resolution using GFPGAN or CodeFormer"""
+
+     def __init__(self, method):
+         self.method = method
+         self.model = None
+         if self.method == "GFPGAN":
+             self.model = GFPGANer(
+                 model_path="gfpgan/weights/GFPGANv1.4.pth",
+                 upscale=1,
+                 arch="clean",
+                 channel_multiplier=2,
+                 bg_upsampler=None,
+             )
+         else:
+            raise Exception("Not support")
+
+     def enhance(self, region_pil):
+         """Apply super-resolution to a given region"""
+         region_cv2 = cv2.cvtColor(np.array(region_pil), cv2.COLOR_RGB2BGR)
+         if self.method == "GFPGAN":
+             _, _, output = self.model.enhance(region_cv2, has_aligned=False, only_center_face=True ,paste_back=True)
+         else:
+            raise Exception("Not support")
+
+         return Image.fromarray(cv2.cvtColor(output, cv2.COLOR_BGR2RGB))
 
 def main(config, args):
     if not os.path.exists(args.video_path):
@@ -79,6 +111,8 @@ def main(config, args):
 
     print(f"Initial seed: {torch.initial_seed()}")
 
+    superres = SuperResolution(args.superres) if args.superres else None
+
     pipeline(
         video_path=args.video_path,
         audio_path=args.audio_path,
@@ -91,6 +125,7 @@ def main(config, args):
         width=config.data.resolution,
         height=config.data.resolution,
         mask_image_path=config.data.mask_image_path,
+        superres=superres
     )
 
 
@@ -104,6 +139,13 @@ if __name__ == "__main__":
     parser.add_argument("--inference_steps", type=int, default=20)
     parser.add_argument("--guidance_scale", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=1247)
+    parser.add_argument(
+         "--superres",
+         type=str,
+         choices=["GFPGAN"],
+         default=None,
+         help="Super-resolution method for mouth region",
+    )
     args = parser.parse_args()
 
     config = OmegaConf.load(args.unet_config_path)

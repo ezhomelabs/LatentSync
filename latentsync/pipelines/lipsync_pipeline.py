@@ -28,6 +28,7 @@ from diffusers.utils import deprecate, logging
 
 from einops import rearrange
 import cv2
+from PIL import Image
 
 from ..models.unet import UNet3DConditionModel
 from ..utils.util import read_video, read_audio, write_video, check_ffmpeg_installed
@@ -264,7 +265,7 @@ class LipsyncPipeline(DiffusionPipeline):
         faces = torch.stack(faces)
         return faces, boxes, affine_matrices
 
-    def restore_video(self, faces: torch.Tensor, video_frames: np.ndarray, boxes: list, affine_matrices: list):
+    def restore_video(self, faces: torch.Tensor, video_frames: np.ndarray, boxes: list, affine_matrices: list, superres=None):
         video_frames = video_frames[: len(faces)]
         out_frames = []
         print(f"Restoring {len(faces)} faces...")
@@ -276,6 +277,16 @@ class LipsyncPipeline(DiffusionPipeline):
             face = rearrange(face, "c h w -> h w c")
             face = (face / 2 + 0.5).clamp(0, 1)
             face = (face * 255).to(torch.uint8).cpu().numpy()
+
+            # Apply super-resolution if available
+            if superres is not None:
+                # Convert NumPy array to PIL Image for super-resolution
+                face_pil = Image.fromarray(face)
+                # Apply super-resolution enhancement
+                face_pil = superres.enhance(face_pil)
+                # Convert back to NumPy array
+                face = np.array(face_pil)
+
             # face = cv2.resize(face, (width, height), interpolation=cv2.INTER_LANCZOS4)
             out_frame = self.image_processor.restorer.restore_img(video_frames[index], face, affine_matrices[index])
             out_frames.append(out_frame)
@@ -333,6 +344,7 @@ class LipsyncPipeline(DiffusionPipeline):
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: Optional[int] = 1,
+        superres = None, # Added superres parameter
         **kwargs,
     ):
         is_train = self.denoising_unet.training
@@ -467,7 +479,8 @@ class LipsyncPipeline(DiffusionPipeline):
             )
             synced_video_frames.append(decoded_latents)
 
-        synced_video_frames = self.restore_video(torch.cat(synced_video_frames), video_frames, boxes, affine_matrices)
+        # Restore the video frames based on the face boxes and affine matrices
+        synced_video_frames = self.restore_video(torch.cat(synced_video_frames), video_frames, boxes, affine_matrices, superres=superres)
 
         audio_samples_remain_length = int(synced_video_frames.shape[0] / video_fps * audio_sample_rate)
         audio_samples = audio_samples[:audio_samples_remain_length].cpu().numpy()
